@@ -1,0 +1,32 @@
+{
+  "name": "live-avatar-mscopilot",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "@azure/identity": "^4.13.0",
+    "@azure/msal-browser": "^5.1.0",
+    "@deepgram/sdk": "latest",
+    "@heygen/liveavatar-web-sdk": "latest",
+    "@microsoft/agents-copilotstudio-client": "^1.2.3",
+    "@tailwindcss/postcss": "^4.1.18",
+    "next": "latest",
+    "react": "latest",
+    "react-dom": "latest"
+  },
+  "devDependencies": {
+    "@types/node": "latest",
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "autoprefixer": "latest",
+    "postcss": "latest",
+    "tailwindcss": "latest",
+    "tsx": "^4.21.0",
+    "typescript": "latest"
+  }
+}
