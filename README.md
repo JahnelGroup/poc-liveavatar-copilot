@@ -6,7 +6,7 @@ Connect a **HeyGen LiveAvatar (LITE mode)** to a **Microsoft Copilot Studio** ag
 - **ElevenLabs** for text-to-speech (TTS)
 - **`@heygen/liveavatar-web-sdk`** for session management + avatar video rendering
 
-The app renders the avatar video in the browser, listens to your mic, sends transcripts to Copilot Studio, converts the reply to PCM audio (ElevenLabs), and drives the avatar lip-sync by calling `repeatAudio()` on the LiveAvatar SDK session.
+The app renders the avatar video in the browser, listens to your mic, sends transcripts to Copilot Studio, converts the reply to PCM audio (ElevenLabs), and drives the avatar speech/lip-sync by calling `speakAudio()` on the LiveAvatar SDK session.
 
 ## Architecture
 
@@ -39,7 +39,7 @@ sequenceDiagram
     NextAPI->>Eleven: TTS (pcm_24000)
     Eleven-->>NextAPI: audio_base64
     NextAPI-->>Browser: audio_base64
-    Browser->>Browser: LiveAvatar SDK repeatAudio(audio_base64)
+    Browser->>Browser: LiveAvatar SDK speakAudio(audio_base64)
 ```
 
 ## Prerequisites
@@ -50,9 +50,10 @@ sequenceDiagram
   - **Deepgram** (API key)
   - **ElevenLabs** (API key + voice id)
 - **Microsoft Copilot Studio** configured with one of:
-  - Entra ID authenticated conversational API access
-  - Token endpoint URL
-  - Direct Line secret
+  - Delegated user sign-in (MSAL) + authenticated conversational API access (recommended)
+  - Server-side Entra ID (client_credentials) authenticated conversational API access
+  - Token endpoint URL (if enabled in your tenant)
+  - Direct Line secret (if enabled in your tenant)
 - Browser requirements:
   - Mic permissions enabled
   - WebRTC + MediaRecorder support
@@ -75,16 +76,23 @@ Create a `.env.local` (recommended) and set the following.
 | `ELEVENLABS_API_KEY` | ✅ | Server | Used by `/api/tts/synthesize` |
 | `ELEVENLABS_VOICE_ID` | ✅ | Server | ElevenLabs voice id |
 | `ELEVENLABS_MODEL_ID` | ⛔️ | Server | Defaults to `eleven_flash_v2_5` |
-| `COPILOT_ENVIRONMENT_ID` | ⛔️ | Server | Power Platform environment id (e.g. `Default-<tenant-id>`) |
-| `COPILOT_AGENT_SCHEMA_NAME` | ⛔️ | Server | Copilot Studio agent schema name |
+| `COPILOT_ENVIRONMENT_ID` | ✅* | Server | Required for Entra modes; Power Platform environment id (e.g. `Default-<tenant-id>`) |
+| `COPILOT_AGENT_SCHEMA_NAME` | ✅* | Server | Required for Entra modes; Copilot Studio agent schema name |
 | `ENTRA_TENANT_ID` | ⛔️ | Server | Entra tenant id for OAuth client credentials |
 | `ENTRA_CLIENT_ID` | ⛔️ | Server | Entra app registration client id |
 | `ENTRA_CLIENT_SECRET` | ⛔️ | Server | Entra app registration client secret |
 | `ENTRA_SCOPE` | ⛔️ | Server | Optional; defaults to `https://api.powerplatform.com/.default` |
+| `NEXT_PUBLIC_ENTRA_TENANT_ID` | ⛔️ | Client | MSAL delegated sign-in tenant id (public) |
+| `NEXT_PUBLIC_ENTRA_CLIENT_ID` | ⛔️ | Client | MSAL delegated sign-in client id (public) |
 | `COPILOT_DEBUG` | ⛔️ | Server | Set `true` to include extra Entra/Copilot diagnostics in error responses |
 | `COPILOT_TOKEN_ENDPOINT` | ⛔️ | Server | Token endpoint URL (`GET`), used when Entra vars are not configured |
 | `COPILOT_DIRECTLINE_SECRET` | ⛔️ | Server | Direct Line secret (`POST /tokens/generate`) fallback |
+| `COPILOT_PROMPT_INSTRUCTIONS` | ⛔️ | Server | Optional prompt instructions appended to every user message |
+| `COPILOT_CLEAN_REPLY` | ⛔️ | Server | If `true`, API returns `speechText` with citations/markdown stripped for TTS |
 | `NEXT_PUBLIC_APP_TITLE` | ⛔️ | Client | UI title |
+| `NEXT_PUBLIC_FILLER_TEXT_TEMPLATE` | ⛔️ | Client | Optional filler phrase while Copilot is thinking (set to enable) |
+
+*Required only for Entra auth modes (`entra` / `entra-delegated`). If you use token endpoint / Direct Line, you can omit these.*
 
 Example `.env.local`:
 
@@ -108,6 +116,8 @@ ELEVENLABS_MODEL_ID=eleven_flash_v2_5
 # 1) Official SDK (Entra ID)
 COPILOT_ENVIRONMENT_ID=Default-your-tenant-id
 COPILOT_AGENT_SCHEMA_NAME=your_agent_schema_name
+NEXT_PUBLIC_ENTRA_TENANT_ID=your_tenant_id
+NEXT_PUBLIC_ENTRA_CLIENT_ID=your_entra_app_client_id
 ENTRA_TENANT_ID=your_tenant_id
 ENTRA_CLIENT_ID=your_entra_app_client_id
 ENTRA_CLIENT_SECRET=your_entra_client_secret
@@ -122,7 +132,24 @@ ENTRA_CLIENT_SECRET=your_entra_client_secret
 
 # Optional public settings
 NEXT_PUBLIC_APP_TITLE=LiveAvatar Copilot
+
+# Optional: filler speech while Copilot is thinking (set to enable)
+# NEXT_PUBLIC_FILLER_TEXT_TEMPLATE=Ah, so you said "{{input}}"... one moment...
+
+# Optional: prompt instructions appended to every user message
+COPILOT_PROMPT_INSTRUCTIONS=Respond ONLY in plain conversational speech. Keep it to 3-4 short sentences maximum.
+
+# Optional: return speechText with citations/markdown stripped (recommended for TTS)
+COPILOT_CLEAN_REPLY=true
 ```
+
+## Features
+
+- **Real-time avatar conversation**: mic → STT (Deepgram) → Copilot Studio → TTS (ElevenLabs) → avatar speech (`speakAudio`)
+- **Microsoft sign-in (MSAL delegated)**: acquire a delegated token in the browser and call Copilot Studio as the signed-in user
+- **Connection cards (e.g. SharePoint)**: supports Copilot Studio connection cards via Adaptive Card `Action.Submit` (Allow/Cancel) and OAuth token exchange
+- **Citations**: transcript shows sources with clickable links; TTS uses cleaned `speechText` (no citations/markdown)
+- **Optional filler speech**: speak a configurable filler phrase while Copilot is thinking (disabled unless `NEXT_PUBLIC_FILLER_TEXT_TEMPLATE` is set)
 
 ## Quick Start
 
@@ -194,7 +221,15 @@ Starts a Direct Line conversation.
 Sends a user message and gets a bot reply. The route automatically uses the official SDK (Entra) or Direct Line based on `method`.
 
 - **Body**: `{ "method"?: "entra" | "entra-delegated" | "directline", "token"?: string, "conversationId": string, "text": string, "watermark"?: string }`
-- **Response**: `{ "botReply": string }`
+- **Response**: `{ "botReply": string, "speechText"?: string, "signinCard"?: object }`
+
+### `POST /api/copilot/token-exchange`
+
+Completes an OAuth connection card by sending a `signin/tokenExchange` invoke activity to Copilot Studio.
+
+### `POST /api/copilot/submit-action`
+
+Sends an Adaptive Card `Action.Submit` payload (e.g. SharePoint “Allow”) back to Copilot Studio and returns the follow-up reply.
 
 ### `POST /api/tts/synthesize`
 
